@@ -34,6 +34,9 @@ class Purpose(object):
     # Action is copying dependencies
     COPY_DEPENDENCIES = "COPY_DEPENDENCIES"
 
+    # Action is sym-linking dependencies
+    SYMLINK_DEPENDENCIES = "SYMLINK_DEPENDENCIES"
+
     # Action is moving dependencies
     MOVE_DEPENDENCIES = "MOVE_DEPENDENCIES"
 

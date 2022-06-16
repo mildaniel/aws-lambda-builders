@@ -4,6 +4,7 @@ NodeJS NPM Workflow using the esbuild bundler
 
 import logging
 import json
+from pathlib import Path
 from typing import List
 
 from aws_lambda_builders.workflow import BaseWorkflow, Capability
@@ -18,6 +19,7 @@ from aws_lambda_builders.utils import which
 from .actions import (
     EsbuildBundleAction,
     EsbuildCheckVersionAction,
+    SymlinkDependenciesAction,
 )
 from .node import SubprocessNodejs
 from .utils import is_experimental_esbuild_scope
@@ -58,6 +60,9 @@ class NodejsNpmEsbuildWorkflow(BaseWorkflow):
         subprocess_esbuild = self._get_esbuild_subprocess(subprocess_npm, scratch_dir, osutils)
 
         bundler_config = self.get_build_properties()
+
+        dir_name = Path(self.artifacts_dir).name
+        self.target_dir = Path(Path(self.artifacts_dir).parent.parent, "build", dir_name)
 
         if not osutils.file_exists(manifest_path):
             LOG.warning("package.json file not found. Bundling source without dependencies.")
@@ -122,7 +127,15 @@ class NodejsNpmEsbuildWorkflow(BaseWorkflow):
             ),
         ]
         esbuild_with_deps = EsbuildBundleAction(scratch_dir, artifacts_dir, bundler_config, osutils, subprocess_esbuild)
-
+        symlink_esbuild = EsbuildBundleAction(
+            str(self.target_dir),
+            artifacts_dir,
+            bundler_config,
+            osutils,
+            subprocess_esbuild,
+            subprocess_node,
+            skip_deps=True,
+        )
         install_action = NodejsNpmWorkflow.get_install_action(
             source_dir, scratch_dir, subprocess_npm, osutils, self.options, is_production=False
         )
@@ -131,11 +144,11 @@ class NodejsNpmEsbuildWorkflow(BaseWorkflow):
             return actions + [install_action, esbuild_with_deps]
 
         return self._accelerate_workflow_actions(
-            source_dir, scratch_dir, actions, install_action, esbuild_with_deps, esbuild_no_deps
+            source_dir, scratch_dir, actions, install_action, esbuild_with_deps, esbuild_no_deps, symlink_esbuild
         )
 
     def _accelerate_workflow_actions(
-        self, source_dir, scratch_dir, actions, install_action, esbuild_with_deps, esbuild_no_deps
+        self, source_dir, scratch_dir, actions, install_action, esbuild_with_deps, esbuild_no_deps, symlink_esbuild
     ):
         """
         Generate a list of Nodejs build actions for incremental build and auto dependency layer
@@ -171,13 +184,15 @@ class NodejsNpmEsbuildWorkflow(BaseWorkflow):
                 actions += esbuild_no_deps + [MoveDependenciesAction(source_dir, scratch_dir, self.dependencies_dir)]
         else:
             if self.dependencies_dir:
-                actions.append(CopySourceAction(self.dependencies_dir, scratch_dir))
+                actions.append(
+                    SymlinkDependenciesAction(self.dependencies_dir, scratch_dir, self.artifacts_dir, self.target_dir)
+                )
                 if self.combine_dependencies:
                     # Auto dependency layer disabled, subsequent builds
                     actions += [esbuild_with_deps]
                 else:
                     # Auto dependency layer enabled, subsequent builds
-                    actions += esbuild_no_deps
+                    actions += [symlink_esbuild]
             else:
                 # Invalid workflow, can't have no dependency dir and no installation
                 raise EsbuildExecutionError(message="Lambda Builders encountered and invalid workflow")

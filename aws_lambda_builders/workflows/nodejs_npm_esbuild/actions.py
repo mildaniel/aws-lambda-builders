@@ -2,12 +2,14 @@
 Actions specific to the esbuild bundler
 """
 import logging
+import os
 from tempfile import NamedTemporaryFile
 
 from pathlib import Path
 
 from aws_lambda_builders.actions import BaseAction, Purpose, ActionFailedError
 from .esbuild import EsbuildExecutionError
+from ...utils import copytree
 
 LOG = logging.getLogger(__name__)
 
@@ -275,3 +277,24 @@ class EsbuildCheckVersionAction(BaseAction):
         :return: version tuple used for comparison
         """
         return tuple(map(int, version_string.split(".")))
+
+
+class SymlinkDependenciesAction(BaseAction):
+    NAME = "SymlinkDependencies"
+    DESCRIPTION = "Symlink dependencies from dependency dir to scratch dir"
+    PURPOSE = Purpose.SYMLINK_DEPENDENCIES
+
+    def __init__(self, cache_dir, scratch_dir, artifacts_dir, target_dir):
+        self._cache_dir = cache_dir
+        self._scratch_dir = scratch_dir
+        self._artifacts_dir = artifacts_dir
+        self._target_dir = target_dir
+
+    def execute(self):
+        if not self._target_dir.is_dir():
+            try:
+                Path(self._target_dir).symlink_to(self._cache_dir, target_is_directory=True)
+            except OSError as ex:
+                LOG.info("Failed to create symlink from earlier cached build, copying instead", exc_info=ex)
+        copytree(self._scratch_dir, str(self._target_dir))
+        # Copy instead here if it doesn't work
